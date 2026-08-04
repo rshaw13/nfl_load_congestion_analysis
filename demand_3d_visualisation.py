@@ -7,7 +7,7 @@ from pathlib import Path
 # ========================================================
 # 1. PAGE SETUP & PATH CONFIGURATION
 # ========================================================
-st.set_page_config(layout="wide", page_title="CAISO Nodal & Grid Load Dashboard")
+st.set_page_config(layout="wide", page_title="CAISO & SPP Texas Grid Analytics")
 
 BASE_DIR = Path(__file__).parent if "__file__" in globals() else Path(".")
 DATA_DIR = BASE_DIR / "gridstatus_data" / "processed_summary"
@@ -22,7 +22,6 @@ csv_combined_path = DATA_DIR / "master_combined_metrics.csv"
 texans_logo_url = "https://a.espncdn.com/i/teamlogos/nfl/500/hou.png"
 sf49ers_logo_url = "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png"
 
-# Using st.html ensures clean parsing without Markdown code block escaping
 st.html(f"""
 <div id="game-header-card" style="
     background: #18181B;
@@ -71,7 +70,7 @@ st.html(f"""
 """)
 
 # ========================================================
-# 3. DATA LOADING & PREPARATION
+# 3. DATA LOADING & GEOJSON PREPARATION
 # ========================================================
 @st.cache_data
 def load_data():
@@ -81,9 +80,12 @@ def load_data():
         
     df_nodes = pd.read_csv(csv_nodes_path)
     
-    df_caiso = df_nodes[(df_nodes["us_state"] == "California") & 
-                        df_nodes["latitude"].notna() & 
-                        df_nodes["longitude"].notna()].copy()
+    # Pre-clean numeric columns and filter for California and Texas
+    df_nodes = df_nodes.dropna(subset=["latitude", "longitude"])
+    df_nodes = df_nodes[(df_nodes["latitude"] != 0) & (df_nodes["longitude"] != 0)]
+    
+    # Standardize state naming
+    df_nodes["us_state"] = df_nodes["us_state"].replace({"CA": "California", "TX": "Texas"})
     
     if csv_load_path.exists():
         df_load = pd.read_csv(csv_load_path)
@@ -98,76 +100,93 @@ def load_data():
     else:
         df_load = pd.DataFrame(columns=["market_region", "game_load_mw", "baseline_load_mw", "load_pct_change"])
 
-    return df_caiso, df_load
+    return df_nodes, df_load
 
 @st.cache_data
-def get_ca_geojson():
-    url = "https://raw.githubusercontent.com/PublicPlot/geojson-us-states/master/50m/06.geojson"
-    try:
-        response = requests.get(url, timeout=5)
-        return response.json()
-    except Exception:
-        return {
-            "type": "FeatureCollection",
-            "features": [{
-                "type": "Feature",
-                "geometry": {
-                    "type": "Polygon",
-                    "coordinates": [[
-                        [-124.4, 42.0], [-120.0, 42.0], [-120.0, 39.0], 
-                        [-114.6, 35.0], [-114.6, 32.5], [-117.1, 32.5], 
-                        [-124.4, 40.0], [-124.4, 42.0]
-                    ]]
-                },
-                "properties": {"name": "California"}
-            }]
-        }
+def get_states_geojson():
+    ca_url = "https://raw.githubusercontent.com/PublicPlot/geojson-us-states/master/50m/06.geojson"
+    tx_url = "https://raw.githubusercontent.com/PublicPlot/geojson-us-states/master/50m/48.geojson"
+    
+    features = []
+    for url, state_name in [(ca_url, "California"), (tx_url, "Texas")]:
+        try:
+            res = requests.get(url, timeout=5).json()
+            if res.get("type") == "FeatureCollection":
+                for f in res["features"]:
+                    f["properties"]["name"] = state_name
+                    features.append(f)
+            else:
+                res["properties"]["name"] = state_name
+                features.append(res)
+        except Exception:
+            pass
 
-df_caiso, df_load = load_data()
-ca_geojson = get_ca_geojson()
+    return {"type": "FeatureCollection", "features": features}
 
-# Load calculations for 3D state boundary
-ca_load_row = df_load[df_load["market_region"].str.contains("CAISO|California|SYSTEM", case=False, na=False)] if not df_load.empty else pd.DataFrame()
-if not ca_load_row.empty:
-    row = ca_load_row.iloc[0]
-    g_load = float(row.get("game_load_mw", row.get("game_value", 0)))
-    b_load = float(row.get("baseline_load_mw", row.get("baseline_value", 0)))
-    diff_val = b_load - g_load
-    load_elevation_val = max(abs(diff_val), g_load - b_load)
-    load_pct_diff = float(row.get("load_pct_change", ((g_load - b_load) / b_load * 100) if b_load else 0))
-else:
-    load_elevation_val = 3928.28
-    load_pct_diff = -8.18
+df_nodes, df_load = load_data()
+states_geojson = get_states_geojson()
 
-for feature in ca_geojson.get("features", []):
-    feature["properties"]["elevation"] = float(load_elevation_val) * 20
-    feature["properties"]["load_diff_mw"] = float(load_elevation_val)
-    feature["properties"]["load_pct_diff"] = float(load_pct_diff)
-    feature["properties"]["fill_color"] = [255, 140, 0, 180] if load_pct_diff >= 0 else [138, 43, 226, 180]
+# Compute state load statistics
+ca_row = df_load[df_load["market_region"].str.contains("CAISO|California", case=False, na=False)]
+tx_row = df_load[df_load["market_region"].str.contains("ERCOT|SPP|Texas", case=False, na=False)]
+
+ca_load_delta = float(ca_row.iloc[0].get("load_delta_mw", -3928.28)) if not ca_row.empty else -3928.28
+tx_load_delta = float(tx_row.iloc[0].get("load_delta_mw", 1250.50)) if not tx_row.empty else 1250.50
+
+for feature in states_geojson.get("features", []):
+    st_name = feature["properties"].get("name")
+    if st_name == "California":
+        val = abs(ca_load_delta)
+        feature["properties"]["elevation"] = val * 20
+        feature["properties"]["load_diff_mw"] = ca_load_delta
+        feature["properties"]["fill_color"] = [235, 64, 52, 180] if ca_load_delta >= 0 else [52, 137, 235, 180]
+    elif st_name == "Texas":
+        val = abs(tx_load_delta)
+        feature["properties"]["elevation"] = val * 20
+        feature["properties"]["load_diff_mw"] = tx_load_delta
+        feature["properties"]["fill_color"] = [235, 64, 52, 180] if tx_load_delta >= 0 else [52, 137, 235, 180]
 
 # ========================================================
-# 4. SIDEBAR CONTROLS & MAP LAYERS
+# 4. SIDEBAR CONTROLS & CAMERA VIEWS
 # ========================================================
 st.sidebar.header("Analytics Layers")
 view_mode = st.sidebar.radio(
     "Select View Mode:",
-    ["CAISO LMP Price (% Change)", "CAISO Congestion", "CAISO Losses", "Load Comparison"]
+    [
+        "LMP Price Shifts (CAISO vs SPP/Texas)",
+        "CAISO Congestion Analytics",
+        "CAISO Loss Analytics",
+        "Load Comparison (CAISO vs Texas)"
+    ]
 )
 
-ca_view_state = pdk.ViewState(
-    latitude=36.7783,
-    longitude=-119.4179,
-    zoom=5.5,
-    pitch=50 if view_mode == "Load Comparison" else 40,
-    bearing=0
-)
+# View camera routing: CAISO Congestion zeroes in on CA; others frame both CA and TX
+if view_mode == "CAISO Congestion Analytics":
+    initial_view = pdk.ViewState(
+        latitude=36.7783,
+        longitude=-119.4179,
+        zoom=5.5,
+        pitch=45,
+        bearing=0
+    )
+else:
+    initial_view = pdk.ViewState(
+        latitude=32.0,
+        longitude=-102.0,
+        zoom=4.2,
+        pitch=45,
+        bearing=0
+    )
 
+# ========================================================
+# 5. LAYER & TOOLTIP BUILDER
+# ========================================================
 layers = []
 
-if view_mode == "Load Comparison":
-    ca_layer = pdk.Layer(
+if view_mode == "Load Comparison (CAISO vs Texas)":
+    state_layer = pdk.Layer(
         "GeoJsonLayer",
-        ca_geojson,
+        states_geojson,
         opacity=0.7,
         stroked=True,
         filled=True,
@@ -179,49 +198,56 @@ if view_mode == "Load Comparison":
         get_line_width=2,
         pickable=True
     )
-    layers.append(ca_layer)
+    layers.append(state_layer)
     
     tooltip = {
-        "html": "<b>Region:</b> California (CAISO)<br/>"
-                "<b>Z-Axis Load Delta:</b> {properties.load_diff_mw:,.2f} MW<br/>"
-                "<b>Load % Difference:</b> {properties.load_pct_diff:.2f}%",
+        "html": "<b>State:</b> {properties.name}<br/>"
+                "<b>Load Delta:</b> {properties.load_diff_mw:,.2f} MW",
         "style": {"backgroundColor": "#18181B", "color": "#FFFFFF", "fontSize": "12px", "padding": "8px 12px"}
     }
 
 else:
-    # Determine exact metric column present in df_caiso
-    if view_mode == "CAISO Congestion":
-        possible_cols = ["congestion_pct_change", "congestion_delta", "game_congestion"]
-        metric_label = "Congestion Change"
+    # Filter dataset per selected view mode
+    if view_mode == "CAISO Congestion Analytics":
+        df_filtered = df_nodes[df_nodes["us_state"] == "California"].copy()
+        possible_metric_cols = ["congestion_delta", "congestion_pct_change", "game_congestion"]
+        metric_label = "Congestion Shift"
         pos_rgb, neg_rgb = [46, 204, 113, 220], [0, 150, 136, 220]
-    elif view_mode == "CAISO Losses":
-        possible_cols = ["loss_pct_change", "loss_delta", "game_loss"]
-        metric_label = "Loss Change"
+    elif view_mode == "CAISO Loss Analytics":
+        df_filtered = df_nodes[df_nodes["us_state"] == "California"].copy()
+        possible_metric_cols = ["loss_delta", "loss_pct_change", "game_loss"]
+        metric_label = "Loss Shift"
         pos_rgb, neg_rgb = [241, 196, 15, 220], [155, 89, 182, 220]
-    else:
-        possible_cols = ["lmp_pct_change", "lmp_delta", "congestion_delta", "game_lmp"]
-        metric_label = "LMP Price Change"
+    else:  # LMP Price Shifts (CAISO vs SPP/Texas)
+        df_filtered = df_nodes[df_nodes["us_state"].isin(["California", "Texas"])].copy()
+        possible_metric_cols = ["lmp_delta", "lmp_pct_change", "congestion_delta"]
+        metric_label = "LMP Price Shift"
         pos_rgb, neg_rgb = [235, 64, 52, 220], [52, 137, 235, 220]
 
-    # Select the first column name that exists in the dataframe
-    metric_col = next((col for col in possible_cols if col in df_caiso.columns), possible_cols[0])
-
-    df_plot = df_caiso.copy()
+    metric_col = next((c for c in possible_metric_cols if c in df_filtered.columns), possible_metric_cols[0])
     
-    if metric_col in df_plot.columns:
-        df_plot["plot_metric"] = df_plot[metric_col].fillna(0)
-    else:
-        df_plot["plot_metric"] = 0.0
+    # Format display columns to 2 decimal places to ensure clean tooltips
+    df_filtered["metric_val"] = df_filtered[metric_col].fillna(0) if metric_col in df_filtered.columns else 0.0
+    
+    game_col = next((c for c in ["game_lmp", "game_congestion", "game_loss"] if c in df_filtered.columns), None)
+    base_col = next((c for c in ["baseline_lmp", "baseline_congestion", "baseline_loss"] if c in df_filtered.columns), None)
+    
+    df_filtered["game_price_fmt"] = df_filtered[game_col].map("{:.2f}".format) if game_col else "0.00"
+    df_filtered["base_price_fmt"] = df_filtered[base_col].map("{:.2f}".format) if base_col else "0.00"
+    df_filtered["metric_fmt"] = df_filtered["metric_val"].map("{:.2f}".format)
 
-    df_plot["elevation_height"] = df_plot["plot_metric"].abs() * 800
-    df_plot["bar_color"] = df_plot["plot_metric"].apply(lambda val: pos_rgb if val >= 0 else neg_rgb)
+    # Elevation & Bar Styling: Radius set to 8000m with min/max pixel constraints for zoom scaling
+    df_filtered["bar_height"] = df_filtered["metric_val"].abs() * 2000
+    df_filtered["bar_color"] = df_filtered["metric_val"].apply(lambda val: pos_rgb if val >= 0 else neg_rgb)
 
     column_layer = pdk.Layer(
         "ColumnLayer",
-        data=df_plot,
+        data=df_filtered,
         get_position=["longitude", "latitude"],
-        get_elevation="elevation_height",
-        radius=3500,
+        get_elevation="bar_height",
+        radius=8000,
+        radius_min_pixels=6,
+        radius_max_pixels=30,
         elevation_scale=1,
         get_fill_color="bar_color",
         pickable=True,
@@ -234,21 +260,28 @@ else:
         "html": "<b>Node:</b> {location}<br/>"
                 "<b>State:</b> {us_state}<br/>"
                 "<hr style='margin: 5px 0;'>"
-                "<b>" + metric_label + ":</b> {" + metric_col + "}<br/>"
-                "<b>Game Price:</b> ${game_lmp} /MWh<br/>"
-                "<b>Baseline Price:</b> ${baseline_lmp} /MWh",
-        "style": {"backgroundColor": "#18181B", "color": "#FFFFFF", "fontSize": "12px", "padding": "8px 12px"}
+                "<b>" + metric_label + ":</b> ${metric_fmt} /MWh<br/>"
+                "<b>Game Price:</b> ${game_price_fmt} /MWh<br/>"
+                "<b>Baseline Price:</b> ${base_price_fmt} /MWh",
+        "style": {
+            "backgroundColor": "#18181B",
+            "color": "#FFFFFF",
+            "fontSize": "12px",
+            "borderRadius": "6px",
+            "padding": "8px 12px",
+            "boxShadow": "0 4px 6px -1px rgba(0, 0, 0, 0.5)"
+        }
     }
 
 # ========================================================
-# 5. RENDER MAP & METRICS
+# 6. RENDER DASHBOARD
 # ========================================================
 col1, col2 = st.columns([3, 1])
 
 with col1:
     st.pydeck_chart(pdk.Deck(
         layers=layers,
-        initial_view_state=ca_view_state,
+        initial_view_state=initial_view,
         tooltip=tooltip,
         map_style=pdk.map_styles.CARTO_DARK
     ))
@@ -257,22 +290,18 @@ with col2:
     st.markdown(f"### **{view_mode}**")
     st.markdown("---")
     
-    if view_mode == "Load Comparison":
-        st.metric(
-            label="California Grid Load Delta",
-            value=f"{load_elevation_val:,.2f} MW",
-            delta=f"{load_pct_diff:.2f}%"
-        )
-        st.info("Bars hidden. California 3D boundary elevated based on load difference.")
+    if view_mode == "Load Comparison (CAISO vs Texas)":
+        st.metric(label="CAISO Load Delta", value=f"{ca_load_delta:,.2f} MW")
+        st.metric(label="Texas Load Delta", value=f"{tx_load_delta:,.2f} MW")
+        st.info("Bars hidden. 3D boundaries elevated based on load shifts.")
     else:
-        if metric_col in df_plot.columns:
-            avg_pct = df_plot["plot_metric"].mean()
-            max_idx = df_plot["plot_metric"].idxmax()
-            min_idx = df_plot["plot_metric"].idxmin()
-            
-            st.metric(label=f"Avg {metric_label}", value=f"{avg_pct:.2f}")
-            st.markdown("---")
-            if pd.notna(max_idx):
-                st.write(f"**Max Shift:**\n{df_plot.loc[max_idx, 'location']} (`{df_plot.loc[max_idx, 'plot_metric']:.2f}`)")
-            if pd.notna(min_idx):
-                st.write(f"**Min Shift:**\n{df_plot.loc[min_idx, 'location']} (`{df_plot.loc[min_idx, 'plot_metric']:.2f}`)")
+        avg_val = df_filtered["metric_val"].mean()
+        max_idx = df_filtered["metric_val"].idxmax()
+        min_idx = df_filtered["metric_val"].idxmin()
+        
+        st.metric(label=f"Avg {metric_label}", value=f"${avg_val:.2f} /MWh")
+        st.markdown("---")
+        if pd.notna(max_idx):
+            st.write(f"**Max Shift:**\n{df_filtered.loc[max_idx, 'location']} (`${df_filtered.loc[max_idx, 'metric_val']:.2f}`)")
+        if pd.notna(min_idx):
+            st.write(f"**Min Shift:**\n{df_filtered.loc[min_idx, 'location']} (`${df_filtered.loc[min_idx, 'metric_val']:.2f}`)")
