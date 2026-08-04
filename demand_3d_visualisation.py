@@ -8,7 +8,7 @@ from pathlib import Path
 # ========================================================
 # 1. PAGE SETUP & PATH CONFIGURATION
 # ========================================================
-st.set_page_config(layout="wide", page_title="CAISO & SPP Grid Analytics")
+st.set_page_config(layout="wide", page_title="NFL Grid Analysis")
 
 BASE_DIR = Path(__file__).parent if "__file__" in globals() else Path(".")
 DATA_DIR = BASE_DIR / "gridstatus_data" / "processed_summary"
