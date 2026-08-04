@@ -9,7 +9,6 @@ from pathlib import Path
 # ========================================================
 st.set_page_config(layout="wide", page_title="CAISO Nodal & Grid Load Dashboard")
 
-# Relative path resolution for Streamlit Cloud & local execution
 BASE_DIR = Path(__file__).parent if "__file__" in globals() else Path(".")
 DATA_DIR = BASE_DIR / "gridstatus_data" / "processed_summary"
 
@@ -18,31 +17,30 @@ csv_load_path = DATA_DIR / "master_load_deltas.csv"
 csv_combined_path = DATA_DIR / "master_combined_metrics.csv"
 
 # ========================================================
-# 2. CONSTANT FLOATING GAME HEADER CARD OVERLAY
+# 2. FLOATING GAME HEADER CARD OVERLAY
 # ========================================================
 texans_logo_url = "https://a.espncdn.com/i/teamlogos/nfl/500/hou.png"
 sf49ers_logo_url = "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png"
 
-st.markdown(f"""
+# Using st.html ensures clean parsing without Markdown code block escaping
+st.html(f"""
 <div id="game-header-card" style="
-    background: rgba(24, 24, 27, 0.92);
-    backdrop-filter: blur(8px);
+    background: #18181B;
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 12px;
-    padding: 14px 24px;
+    padding: 16px 24px;
     color: #FFFFFF;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    font-family: system-ui, -apple-system, sans-serif;
     box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6);
     max-width: 650px;
     margin: 0 auto 20px auto;
     text-align: center;
 ">
-    <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #A1A1AA; font-weight: 600; margin-bottom: 6px;">
+    <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #A1A1AA; font-weight: 600; margin-bottom: 8px;">
         NFL Game Day Analysis • Oct 26, 2025
     </div>
     
     <div style="display: flex; align-items: center; justify-content: space-between; margin: 8px 0;">
-        <!-- Left: Texans Logo & Team Info -->
         <div style="display: flex; align-items: center; gap: 12px;">
             <img src="{texans_logo_url}" alt="Texans Logo" style="width: 40px; height: 40px; object-fit: contain;" />
             <div style="text-align: left;">
@@ -51,12 +49,10 @@ st.markdown(f"""
             </div>
         </div>
 
-        <!-- Center: Score -->
         <div style="font-size: 24px; font-weight: 800; color: #38BDF8; padding: 0 16px;">
             26 <span style="font-size: 16px; color: #71717A; font-weight: 400;">-</span> 15
         </div>
 
-        <!-- Right: 49ers Team Info & Logo -->
         <div style="display: flex; align-items: center; gap: 12px;">
             <div style="text-align: right;">
                 <div style="font-size: 15px; font-weight: 700;">SF 49ers</div>
@@ -66,14 +62,13 @@ st.markdown(f"""
         </div>
     </div>
 
-    <!-- Kickoff Subheader -->
-    <div style="border-top: 1px solid rgba(255, 255, 255, 0.12); margin-top: 8px; padding-top: 8px; display: flex; justify-content: space-around; font-size: 12px; color: #E4E4E7;">
+    <div style="border-top: 1px solid rgba(255, 255, 255, 0.12); margin-top: 10px; padding-top: 10px; display: flex; justify-content: space-around; font-size: 12px; color: #E4E4E7;">
         <div><b>CA Kickoff:</b> 10:00 AM PDT</div>
         <div style="color: #52525B;">|</div>
         <div><b>TX Kickoff:</b> 12:00 PM CDT</div>
     </div>
 </div>
-""", unsafe_allow_html=True)
+""")
 
 # ========================================================
 # 3. DATA LOADING & PREPARATION
@@ -81,17 +76,15 @@ st.markdown(f"""
 @st.cache_data
 def load_data():
     if not csv_nodes_path.exists():
-        st.error(f"Master CSV not found at `{csv_nodes_path}`. Please verify your folder structure.")
+        st.error(f"Master CSV not found at `{csv_nodes_path}`.")
         st.stop()
         
     df_nodes = pd.read_csv(csv_nodes_path)
     
-    # Filter strictly for California nodes with valid coordinates
     df_caiso = df_nodes[(df_nodes["us_state"] == "California") & 
                         df_nodes["latitude"].notna() & 
                         df_nodes["longitude"].notna()].copy()
     
-    # Load grid load summary dataset
     if csv_load_path.exists():
         df_load = pd.read_csv(csv_load_path)
     elif csv_combined_path.exists():
@@ -133,13 +126,12 @@ def get_ca_geojson():
 df_caiso, df_load = load_data()
 ca_geojson = get_ca_geojson()
 
-# Calculate California Load variance for 3D state extrusion
-ca_load_row = df_load[df_load["market_region"].str.contains("CAISO|California|SYSTEM", case=False, na=False)]
+# Load calculations for 3D state boundary
+ca_load_row = df_load[df_load["market_region"].str.contains("CAISO|California|SYSTEM", case=False, na=False)] if not df_load.empty else pd.DataFrame()
 if not ca_load_row.empty:
     row = ca_load_row.iloc[0]
     g_load = float(row.get("game_load_mw", row.get("game_value", 0)))
     b_load = float(row.get("baseline_load_mw", row.get("baseline_value", 0)))
-    
     diff_val = b_load - g_load
     load_elevation_val = max(abs(diff_val), g_load - b_load)
     load_pct_diff = float(row.get("load_pct_change", ((g_load - b_load) / b_load * 100) if b_load else 0))
@@ -147,7 +139,6 @@ else:
     load_elevation_val = 3928.28
     load_pct_diff = -8.18
 
-# Inject 3D height into GeoJSON properties
 for feature in ca_geojson.get("features", []):
     feature["properties"]["elevation"] = float(load_elevation_val) * 20
     feature["properties"]["load_diff_mw"] = float(load_elevation_val)
@@ -155,7 +146,7 @@ for feature in ca_geojson.get("features", []):
     feature["properties"]["fill_color"] = [255, 140, 0, 180] if load_pct_diff >= 0 else [138, 43, 226, 180]
 
 # ========================================================
-# 4. SIDEBAR CONTROLS & CAMERA VIEW
+# 4. SIDEBAR CONTROLS & MAP LAYERS
 # ========================================================
 st.sidebar.header("Analytics Layers")
 view_mode = st.sidebar.radio(
@@ -163,7 +154,6 @@ view_mode = st.sidebar.radio(
     ["CAISO LMP Price (% Change)", "CAISO Congestion", "CAISO Losses", "Load Comparison"]
 )
 
-# Lock camera strictly to California
 ca_view_state = pdk.ViewState(
     latitude=36.7783,
     longitude=-119.4179,
@@ -172,13 +162,9 @@ ca_view_state = pdk.ViewState(
     bearing=0
 )
 
-# ========================================================
-# 5. LAYER BUILDER & TOOLTIPS
-# ========================================================
 layers = []
 
 if view_mode == "Load Comparison":
-    # 3D Extruded State Boundary (Node bars hidden)
     ca_layer = pdk.Layer(
         "GeoJsonLayer",
         ca_geojson,
@@ -199,32 +185,34 @@ if view_mode == "Load Comparison":
         "html": "<b>Region:</b> California (CAISO)<br/>"
                 "<b>Z-Axis Load Delta:</b> {properties.load_diff_mw:,.2f} MW<br/>"
                 "<b>Load % Difference:</b> {properties.load_pct_diff:.2f}%",
-        "style": {
-            "backgroundColor": "#18181B",
-            "color": "#FFFFFF",
-            "fontSize": "12px",
-            "borderRadius": "6px",
-            "padding": "8px 12px"
-        }
+        "style": {"backgroundColor": "#18181B", "color": "#FFFFFF", "fontSize": "12px", "padding": "8px 12px"}
     }
 
 else:
-    # Set metric mapping and unique non-red/blue palettes for Congestion and Losses
+    # Determine exact metric column present in df_caiso
     if view_mode == "CAISO Congestion":
-        metric_col = "congestion_pct_change"
-        metric_label = "Congestion % Change"
-        pos_rgb, neg_rgb = [46, 204, 113, 220], [0, 150, 136, 220]  # Emerald / Teal
+        possible_cols = ["congestion_pct_change", "congestion_delta", "game_congestion"]
+        metric_label = "Congestion Change"
+        pos_rgb, neg_rgb = [46, 204, 113, 220], [0, 150, 136, 220]
     elif view_mode == "CAISO Losses":
-        metric_col = "loss_pct_change"
-        metric_label = "Loss % Change"
-        pos_rgb, neg_rgb = [241, 196, 15, 220], [155, 89, 182, 220]  # Amber / Purple
-    else:  # LMP Price (% Change)
-        metric_col = "lmp_pct_change"
-        metric_label = "LMP Price % Change"
-        pos_rgb, neg_rgb = [235, 64, 52, 220], [52, 137, 235, 220]  # Red / Blue
+        possible_cols = ["loss_pct_change", "loss_delta", "game_loss"]
+        metric_label = "Loss Change"
+        pos_rgb, neg_rgb = [241, 196, 15, 220], [155, 89, 182, 220]
+    else:
+        possible_cols = ["lmp_pct_change", "lmp_delta", "congestion_delta", "game_lmp"]
+        metric_label = "LMP Price Change"
+        pos_rgb, neg_rgb = [235, 64, 52, 220], [52, 137, 235, 220]
+
+    # Select the first column name that exists in the dataframe
+    metric_col = next((col for col in possible_cols if col in df_caiso.columns), possible_cols[0])
 
     df_plot = df_caiso.copy()
-    df_plot["plot_metric"] = df_plot[metric_col].fillna(0)
+    
+    if metric_col in df_plot.columns:
+        df_plot["plot_metric"] = df_plot[metric_col].fillna(0)
+    else:
+        df_plot["plot_metric"] = 0.0
+
     df_plot["elevation_height"] = df_plot["plot_metric"].abs() * 800
     df_plot["bar_color"] = df_plot["plot_metric"].apply(lambda val: pos_rgb if val >= 0 else neg_rgb)
 
@@ -242,26 +230,18 @@ else:
     )
     layers.append(column_layer)
 
-    # Safe tooltip string formatting (prevents f-string single brace syntax error)
     tooltip = {
         "html": "<b>Node:</b> {location}<br/>"
                 "<b>State:</b> {us_state}<br/>"
                 "<hr style='margin: 5px 0;'>"
-                "<b>" + metric_label + ":</b> {" + metric_col + ":.2f}%<br/>"
-                "<b>Game Price:</b> ${game_lmp:.2f} /MWh<br/>"
-                "<b>Baseline Price:</b> ${baseline_lmp:.2f} /MWh",
-        "style": {
-            "backgroundColor": "#18181B",
-            "color": "#FFFFFF",
-            "fontSize": "12px",
-            "borderRadius": "6px",
-            "padding": "8px 12px",
-            "boxShadow": "0 4px 6px -1px rgba(0, 0, 0, 0.5)"
-        }
+                "<b>" + metric_label + ":</b> {" + metric_col + "}<br/>"
+                "<b>Game Price:</b> ${game_lmp} /MWh<br/>"
+                "<b>Baseline Price:</b> ${baseline_lmp} /MWh",
+        "style": {"backgroundColor": "#18181B", "color": "#FFFFFF", "fontSize": "12px", "padding": "8px 12px"}
     }
 
 # ========================================================
-# 6. RENDER DECK & SUMMARY SIDEBAR
+# 5. RENDER MAP & METRICS
 # ========================================================
 col1, col2 = st.columns([3, 1])
 
@@ -285,13 +265,14 @@ with col2:
         )
         st.info("Bars hidden. California 3D boundary elevated based on load difference.")
     else:
-        avg_pct = df_plot[metric_col].mean()
-        max_idx = df_plot[metric_col].idxmax()
-        min_idx = df_plot[metric_col].idxmin()
-        
-        st.metric(label=f"Avg {metric_label}", value=f"{avg_pct:.2f}%")
-        st.markdown("---")
-        if pd.notna(max_idx):
-            st.write(f"**Max Shift:**\n{df_plot.loc[max_idx, 'location']} (`+{df_plot.loc[max_idx, metric_col]:.2f}%`)")
-        if pd.notna(min_idx):
-            st.write(f"**Min Shift:**\n{df_plot.loc[min_idx, 'location']} (`{df_plot.loc[min_idx, metric_col]:.2f}%`)")
+        if metric_col in df_plot.columns:
+            avg_pct = df_plot["plot_metric"].mean()
+            max_idx = df_plot["plot_metric"].idxmax()
+            min_idx = df_plot["plot_metric"].idxmin()
+            
+            st.metric(label=f"Avg {metric_label}", value=f"{avg_pct:.2f}")
+            st.markdown("---")
+            if pd.notna(max_idx):
+                st.write(f"**Max Shift:**\n{df_plot.loc[max_idx, 'location']} (`{df_plot.loc[max_idx, 'plot_metric']:.2f}`)")
+            if pd.notna(min_idx):
+                st.write(f"**Min Shift:**\n{df_plot.loc[min_idx, 'location']} (`{df_plot.loc[min_idx, 'plot_metric']:.2f}`)")
