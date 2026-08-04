@@ -63,11 +63,11 @@ st.html(f"""
     </div>
 
     <div style="border-top: 1px solid rgba(255, 255, 255, 0.12); margin-top: 10px; padding-top: 10px; display: flex; justify-content: space-around; font-size: 12px; color: #E4E4E7;">
-        <div><b>CA Kickoff:</b> 10:00 AM PDT</div>
+        <div><b>TX Kickoff:</b> 12:00 PM CDT</div>
         <div style="color: #52525B;">|</div>
         <div><b>Game Duration:</b> 2hrs 58min</div>
         <div style="color: #52525B;">|</div>
-        <div><b>TX Kickoff:</b> 12:00 PM CDT</div>
+        <div><b>CA Kickoff:</b> 10:00 AM PDT</div>
     </div>
 </div>
 """)
@@ -163,12 +163,12 @@ for feature in states_geojson.get("features", []):
         val = abs(ca_load_delta)
         feature["properties"]["elevation"] = float(val * 35)
         feature["properties"]["load_diff_mw"] = ca_load_delta
-        feature["properties"]["fill_color"] = [235, 64, 52, 180]  # Red for CA
+        feature["properties"]["fill_color"] = [235, 64, 52, 180]
     elif st_name == "Texas":
         val = abs(tx_load_delta)
         feature["properties"]["elevation"] = float(val * 35)
         feature["properties"]["load_diff_mw"] = tx_load_delta
-        feature["properties"]["fill_color"] = [52, 137, 235, 180]  # Blue for TX
+        feature["properties"]["fill_color"] = [52, 137, 235, 180]
 
 # ========================================================
 # 4. SIDEBAR CONTROLS & CAMERA VIEWS
@@ -184,10 +184,10 @@ view_mode = st.sidebar.radio(
     ]
 )
 
-# Camera Routing
+# Camera Routing: Shifted CAISO view south to 35.2 latitude
 if view_mode in ["Gametime CAISO Congestion Analytics", "Gametime CAISO Loss Analytics"]:
     initial_view = pdk.ViewState(
-        latitude=36.7783,
+        latitude=35.2,
         longitude=-119.4179,
         zoom=5.5,
         pitch=45,
@@ -226,7 +226,9 @@ if view_mode == "Gametime Load Comparison (CAISO vs ERCOT)":
     )
     layers.append(state_layer)
 
-    # 2. Build 3D Load Bars (CAISO Red, Texas Blue)
+    # Scale multiplier for MW load columns
+    load_scale = 10.0
+
     load_bar_data = pd.DataFrame([
         {
             "display_city": "California System Load",
@@ -237,8 +239,9 @@ if view_mode == "Gametime Load Comparison (CAISO vs ERCOT)":
             "load_delta_fmt": f"{ca_load_delta:,.0f}",
             "game_load_fmt": f"{ca_game_load:,.0f}",
             "base_load_fmt": f"{ca_base_load:,.0f}",
-            "bar_height": abs(ca_load_delta) * 50,
-            "bar_color": [235, 64, 52, 220]  # Red for CAISO
+            "game_height": ca_game_load * load_scale,
+            "base_height": ca_base_load * load_scale,
+            "total_stacked_height": (ca_game_load + ca_base_load) * load_scale
         },
         {
             "display_city": "Texas System Load",
@@ -249,26 +252,46 @@ if view_mode == "Gametime Load Comparison (CAISO vs ERCOT)":
             "load_delta_fmt": f"{tx_load_delta:,.0f}",
             "game_load_fmt": f"{tx_game_load:,.0f}",
             "base_load_fmt": f"{tx_base_load:,.0f}",
-            "bar_height": abs(tx_load_delta) * 50,
-            "bar_color": [52, 137, 235, 220]  # Blue for Texas
+            "game_height": tx_game_load * load_scale,
+            "base_height": tx_base_load * load_scale,
+            "total_stacked_height": (tx_game_load + tx_base_load) * load_scale
         }
     ])
 
-    load_column_layer = pdk.Layer(
+    # Stacked Outer Column: Baseline Load (Red) stacked on top
+    baseline_column_layer = pdk.Layer(
         "ColumnLayer",
         data=load_bar_data,
         get_position=["longitude", "latitude"],
-        get_elevation="bar_height",
+        get_elevation="total_stacked_height",
         radius=75000,
         radius_min_pixels=20,
         radius_max_pixels=100,
         elevation_scale=1,
-        get_fill_color="bar_color",
+        get_fill_color="[235, 64, 52, 220]",  # Red for Baseline
         pickable=True,
         auto_highlight=True,
         extruded=True
     )
-    layers.append(load_column_layer)
+
+    # Stacked Inner/Bottom Column: Gametime Load (Blue) at base
+    game_column_layer = pdk.Layer(
+        "ColumnLayer",
+        data=load_bar_data,
+        get_position=["longitude", "latitude"],
+        get_elevation="game_height",
+        radius=75000,
+        radius_min_pixels=20,
+        radius_max_pixels=100,
+        elevation_scale=1,
+        get_fill_color="[52, 137, 235, 240]",  # Blue for Gametime Load
+        pickable=True,
+        auto_highlight=True,
+        extruded=True
+    )
+
+    layers.append(baseline_column_layer)
+    layers.append(game_column_layer)
     
     tooltip = {
         "html": "<b>Region:</b> {display_city}<br/>"
@@ -294,7 +317,7 @@ else:
         metric_col_choices = ["congestion_delta", "game_congestion"]
         metric_label = "Congestion Shift"
         pos_rgb, neg_rgb = [46, 204, 113, 220], [0, 150, 136, 220]
-        height_multiplier = 20000  # Scaled up 10x
+        height_multiplier = 20000
         bar_radius = 8000
         
     elif view_mode == "Gametime CAISO Loss Analytics":
@@ -302,7 +325,7 @@ else:
         metric_col_choices = ["loss_delta", "game_loss"]
         metric_label = "Loss Shift"
         pos_rgb, neg_rgb = [241, 196, 15, 220], [155, 89, 182, 220]
-        height_multiplier = 20000  # Scaled up 10x
+        height_multiplier = 20000
         bar_radius = 8000
         
     else:  # Gametime Nodal Price Spike Analysis
@@ -310,8 +333,8 @@ else:
         metric_col_choices = ["price_delta", "lmp_delta", "price_pct_change"]
         metric_label = "LMP Price Shift"
         pos_rgb, neg_rgb = [235, 64, 52, 220], [52, 137, 235, 220]
-        height_multiplier = 6000  # Scaled height up 3x (from 2000)
-        bar_radius = 8800         # 10% thicker in radius (from 8000)
+        height_multiplier = 6000
+        bar_radius = 8800
 
     # 1. Primary Metric Shift
     metric_col = next((c for c in metric_col_choices if c in df_filtered.columns), None)
@@ -387,15 +410,14 @@ col1, col2 = st.columns([3, 1])
 
 with col1:
     # Color Legend Header HTML per mode
-    legend_html = ""
     if view_mode == "Gametime Load Comparison (CAISO vs ERCOT)":
         legend_html = """
         <div style="display: flex; gap: 20px; margin-bottom: 10px; font-size: 13px; font-weight: 600;">
             <div style="display: flex; align-items: center; gap: 8px;">
-                <span style="width: 14px; height: 14px; background-color: #EB4034; border-radius: 3px; display: inline-block;"></span> CAISO System Load (Red)
+                <span style="width: 14px; height: 14px; background-color: #3489EB; border-radius: 3px; display: inline-block;"></span> Gametime Load (Blue)
             </div>
             <div style="display: flex; align-items: center; gap: 8px;">
-                <span style="width: 14px; height: 14px; background-color: #3489EB; border-radius: 3px; display: inline-block;"></span> ERCOT System Load (Blue)
+                <span style="width: 14px; height: 14px; background-color: #EB4034; border-radius: 3px; display: inline-block;"></span> Baseline Load (Red)
             </div>
         </div>
         """
