@@ -2,9 +2,7 @@ from pathlib import Path
 import pandas as pd
 import re
 
-# ========================================================
-# 1. PATHS, DIRECTORIES & LOOKUP TABLES
-# ========================================================
+
 lmp_input_folder = Path("C:/Users/ryans/Desktop/Ryan S/nfl_grid_analysis/gridstatus_data/lmp_csvs")
 load_input_folder = Path("C:/Users/ryans/Desktop/Ryan S/nfl_grid_analysis/gridstatus_data/load_csvs")
 output_folder = Path("C:/Users/ryans/Desktop/Ryan S/nfl_grid_analysis/gridstatus_data/processed_summary")
@@ -15,7 +13,6 @@ nodes_df = pd.read_csv(nodes_file) if nodes_file.exists() else None
 
 game_date_str = "2025-10-26"
 
-# Hardcoded fallback for unmapped coordinates and states
 FALLBACK_NODES = {
     "ANAHEIM_6_N001"    : {"city": "Anaheim, CA", "us_state": "California", "latitude": 33.8531627, "longitude": -117.857995},
     "BALCH1_7_N001"     : {"city": "Fresno, CA", "us_state": "California", "latitude": 36.908933, "longitude": -119.087736},
@@ -39,7 +36,7 @@ FALLBACK_NODES = {
 
 
 def clean_node_to_city(raw_name):
-    """Fallback function to derive a human-readable city string from raw node code."""
+
     if not isinstance(raw_name, str) or not raw_name:
         return "Unknown City"
     cleaned = re.sub(r'_\d+_[A-Z0-9]+$', '', raw_name)
@@ -48,7 +45,6 @@ def clean_node_to_city(raw_name):
 
 
 def process_file_timestamps(df, filename):
-    """Parses timestamps per file based on market area (US/Central for Texas, US/Pacific for California)."""
     is_ercot = any(k in filename.lower() for k in ["ercot", "texas"])
     market_tz = "US/Central" if is_ercot else "US/Pacific"
 
@@ -66,9 +62,7 @@ def process_file_timestamps(df, filename):
     return df
 
 
-# ========================================================
-# PIPELINE 1: LOAD / DEMAND COMPARISON (CAISO & ERCOT)
-# ========================================================
+
 print("=" * 60)
 print("PROCESSING GRID LOAD / DEMAND FILES")
 print("=" * 60)
@@ -82,12 +76,12 @@ for f in load_csv_files:
         temp_df["source_file"] = f.name
         temp_df = process_file_timestamps(temp_df, f.name)
 
-        # Map load/demand column
+
         load_col = next((c for c in ["load", "load_mw", "demand", "mw"] if c in temp_df.columns), None)
         if load_col:
             temp_df["load_mw"] = temp_df[load_col]
 
-            # Entity column (System Total, Zone, etc.)
+
             if "region" in temp_df.columns:
                 temp_df["entity_id"] = temp_df["region"]
             elif "zone" in temp_df.columns:
@@ -103,7 +97,7 @@ if load_dfs:
     full_load_df = pd.concat(load_dfs, ignore_index=True)
     full_load_df["dt_local"] = pd.to_datetime(full_load_df["dt_local"], utc=True)
 
-    # 10 AM - 1 PM window filter
+
     target_start = pd.to_datetime("10:00:00").time()
     target_end = pd.to_datetime("13:00:00").time()
 
@@ -113,7 +107,7 @@ if load_dfs:
     )
     time_window_load = full_load_df[load_window_mask].copy()
 
-    # Split Game Day vs Baseline
+
     game_load_mask = time_window_load["dt_local"].dt.strftime("%Y-%m-%d") == game_date_str
     game_load_df = time_window_load[game_load_mask]
     baseline_load_df = time_window_load[~game_load_mask]
@@ -126,7 +120,6 @@ if load_dfs:
 
     load_summary = pd.merge(game_load_stats, baseline_load_stats, on=["entity_id", "market_region"], how="outer")
 
-    # Load Deltas and Percentage Changes
     load_summary["load_delta_mw"] = load_summary["game_load_mw"] - load_summary["baseline_load_mw"]
     load_summary["load_pct_change"] = (
         load_summary["load_delta_mw"] / load_summary["baseline_load_mw"].abs()
@@ -137,9 +130,6 @@ if load_dfs:
     print(f"SUCCESS: Saved Load Summary -> {master_load_file}")
 
 
-# ========================================================
-# PIPELINE 2: NODAL PRICE & CONGESTION DATASETS
-# ========================================================
 print("=" * 60)
 print("PROCESSING NODAL PRICE (LMP / SPP) & CONGESTION FILES")
 print("=" * 60)
@@ -153,19 +143,18 @@ for f in lmp_csv_files:
         temp_df["source_file"] = f.name
         temp_df = process_file_timestamps(temp_df, f.name)
 
-        # Standardize Location / Node column
+
         temp_df = temp_df.rename(columns={
             "settlement_point": "location",
             "pnode_id": "location",
             "node": "location"
         })
 
-        # Texas/ERCOT: pull only 'spp' as primary price ('price'), set congestion/loss to NA
         if "spp" in temp_df.columns:
             temp_df["price"] = temp_df["spp"]
             temp_df["congestion"] = pd.NA
             temp_df["loss"] = pd.NA
-        # California/CAISO: pull 'lmp', 'congestion', 'loss'
+
         elif "lmp" in temp_df.columns:
             temp_df["price"] = temp_df["lmp"]
             temp_df["congestion"] = temp_df.get("congestion", temp_df.get("mcc", 0.0))
@@ -179,7 +168,6 @@ if lmp_dfs:
     full_lmp_df = pd.concat(lmp_dfs, ignore_index=True)
     full_lmp_df["dt_local"] = pd.to_datetime(full_lmp_df["dt_local"], utc=True)
 
-    # 10 AM - 1 PM local market window filter
     target_start = pd.to_datetime("10:00:00").time()
     target_end = pd.to_datetime("13:00:00").time()
 
@@ -189,7 +177,6 @@ if lmp_dfs:
     )
     time_window_df = full_lmp_df[window_mask].copy()
 
-    # Split Game Day vs Baseline
     game_mask = time_window_df["dt_local"].dt.strftime("%Y-%m-%d") == game_date_str
     game_df = time_window_df[game_mask]
     baseline_df = time_window_df[~game_mask]
@@ -204,20 +191,17 @@ if lmp_dfs:
 
     lmp_summary = pd.merge(game_stats, baseline_stats, on="location", how="outer")
 
-    # Percentage change for simple price (LMP for CA / SPP for TX)
     lmp_summary["price_delta"] = lmp_summary["game_price"] - lmp_summary["baseline_price"]
     lmp_summary["price_pct_change"] = (
         lmp_summary["price_delta"] / lmp_summary["baseline_price"].abs()
     ) * 100
 
-    # Congestion & Loss deltas for nodes that support them
     for comp in ["congestion", "loss"]:
         lmp_summary[f"{comp}_delta"] = lmp_summary[f"game_{comp}"] - lmp_summary[f"baseline_{comp}"]
         lmp_summary[f"{comp}_pct_change"] = (
             lmp_summary[f"{comp}_delta"] / lmp_summary[f"baseline_{comp}"].abs()
         ) * 100
 
-    # 1. Merge only coordinates and state from nodes_with_states.csv (explicitly ignoring any city column in nodes_df)
     if nodes_df is not None:
         lmp_summary = pd.merge(
             lmp_summary,
@@ -227,17 +211,14 @@ if lmp_dfs:
             how="left"
         ).drop(columns=["node_id"], errors="ignore")
 
-    # Ensure required columns exist
     for col in ["us_state", "latitude", "longitude"]:
         if col not in lmp_summary.columns:
             lmp_summary[col] = pd.NA
 
-    # 2. Assign city strictly from FALLBACK_NODES dictionary
     lmp_summary["city"] = lmp_summary["location"].map(
         lambda loc: FALLBACK_NODES.get(loc, {}).get("city", None)
     )
 
-    # Apply remaining fallback attributes (state, lat, lon) from dictionary if missing
     for loc, info in FALLBACK_NODES.items():
         mask = lmp_summary["location"] == loc
         if mask.any():
@@ -245,7 +226,6 @@ if lmp_dfs:
             lmp_summary.loc[mask & lmp_summary["latitude"].isna(), "latitude"] = info["latitude"]
             lmp_summary.loc[mask & lmp_summary["longitude"].isna(), "longitude"] = info["longitude"]
 
-    # 3. Clean string fallback for nodes not listed in FALLBACK_NODES
     unmapped_mask = lmp_summary["city"].isna()
     if unmapped_mask.any():
         lmp_summary.loc[unmapped_mask, "city"] = lmp_summary.loc[unmapped_mask, "location"].apply(clean_node_to_city)

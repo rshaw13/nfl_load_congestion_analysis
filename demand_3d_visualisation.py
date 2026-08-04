@@ -5,9 +5,7 @@ import requests
 import re
 from pathlib import Path
 
-# ========================================================
-# 1. PAGE SETUP & PATH CONFIGURATION
-# ========================================================
+
 st.set_page_config(layout="wide", page_title="NFL Grid Analysis")
 
 BASE_DIR = Path(__file__).parent if "__file__" in globals() else Path(".")
@@ -17,9 +15,7 @@ csv_nodes_path = DATA_DIR / "master_congestion_and_lmp_deltas.csv"
 csv_load_path = DATA_DIR / "master_load_deltas.csv"
 csv_combined_path = DATA_DIR / "master_combined_metrics.csv"
 
-# ========================================================
-# 2. FULL-WIDTH FLOATING GAME HEADER CARD
-# ========================================================
+
 texans_logo_url = "https://a.espncdn.com/i/teamlogos/nfl/500/hou.png"
 sf49ers_logo_url = "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png"
 
@@ -72,9 +68,6 @@ st.html(f"""
 </div>
 """)
 
-# ========================================================
-# 3. HELPER FUNCTIONS & DATA LOADING
-# ========================================================
 def clean_city_name(raw_name):
     """Fallback helper to clean node strings if city column is missing."""
     if not isinstance(raw_name, str) or not raw_name:
@@ -98,7 +91,7 @@ def load_data():
     # Standardize state names
     df_nodes["us_state"] = df_nodes["us_state"].replace({"CA": "California", "TX": "Texas"})
     
-    # Strictly use 'City' or 'city' column from master congestion CSV
+    # Strictly use 'city' column from master congestion CSV
     city_col = next((c for c in ["City", "city"] if c in df_nodes.columns), None)
     if city_col and df_nodes[city_col].notna().any():
         df_nodes["display_city"] = df_nodes[city_col].fillna(df_nodes["location"].apply(clean_city_name))
@@ -144,7 +137,7 @@ def get_states_geojson():
 df_nodes, df_load = load_data()
 states_geojson = get_states_geojson()
 
-# Compute state load statistics
+# state load statistics
 ca_row = df_load[df_load["market_region"].str.contains("CAISO|California", case=False, na=False)]
 tx_row = df_load[df_load["market_region"].str.contains("ERCOT|SPP|Texas", case=False, na=False)]
 
@@ -170,9 +163,8 @@ for feature in states_geojson.get("features", []):
         feature["properties"]["load_diff_mw"] = tx_load_delta
         feature["properties"]["fill_color"] = [52, 137, 235, 180]
 
-# ========================================================
-# 4. SIDEBAR CONTROLS & CAMERA VIEWS
-# ========================================================
+
+
 st.sidebar.header("Analytics Layers")
 view_mode = st.sidebar.radio(
     "Select View Mode:",
@@ -184,7 +176,7 @@ view_mode = st.sidebar.radio(
     ]
 )
 
-# Camera Routing: CAISO view shifted south to 35.2 latitude
+# Camera
 if view_mode in ["Gametime CAISO Congestion Analytics", "Gametime CAISO Loss Analytics"]:
     initial_view = pdk.ViewState(
         latitude=35.2,
@@ -202,13 +194,11 @@ else:
         bearing=0
     )
 
-# ========================================================
-# 5. LAYER & TOOLTIP BUILDER
-# ========================================================
+
 layers = []
 
 if view_mode == "Gametime Load Comparison (CAISO vs ERCOT)":
-    # 1. Render 3D State Boundaries
+    
     state_layer = pdk.Layer(
         "GeoJsonLayer",
         states_geojson,
@@ -255,7 +245,7 @@ if view_mode == "Gametime Load Comparison (CAISO vs ERCOT)":
         }
     ])
 
-    # 1. Red Top Column Layer (Difference stacked on top of Gametime Load)
+    
     difference_column_layer = pdk.Layer(
         "ColumnLayer",
         data=load_bar_data,
@@ -265,7 +255,7 @@ if view_mode == "Gametime Load Comparison (CAISO vs ERCOT)":
         radius_min_pixels=20,
         radius_max_pixels=100,
         elevation_scale=1,
-        get_fill_color="[235, 64, 52, 220]",  # Red for Load Difference
+        get_fill_color="[235, 64, 52, 220]",  # Red for load difference
         pickable=True,
         auto_highlight=True,
         extruded=True
@@ -281,7 +271,7 @@ if view_mode == "Gametime Load Comparison (CAISO vs ERCOT)":
         radius_min_pixels=20,
         radius_max_pixels=100,
         elevation_scale=1,
-        get_fill_color="[52, 137, 235, 240]",  # Blue for Gametime Load
+        get_fill_color="[52, 137, 235, 240]",  # Blue for gametime load
         pickable=True,
         auto_highlight=True,
         extruded=True
@@ -308,7 +298,7 @@ if view_mode == "Gametime Load Comparison (CAISO vs ERCOT)":
     }
 
 else:
-    # Set mode-specific metrics, colors, and height scaling multipliers
+
     if view_mode == "Gametime CAISO Congestion Analytics":
         df_filtered = df_nodes[df_nodes["us_state"] == "California"].copy()
         metric_col_choices = ["congestion_delta", "game_congestion"]
@@ -325,7 +315,7 @@ else:
         height_multiplier = 20000
         bar_radius = 8000
         
-    else:  # Gametime Nodal Price Spike Analysis
+    else:  
         df_filtered = df_nodes[df_nodes["us_state"].isin(["California", "Texas"])].copy()
         metric_col_choices = ["price_delta", "lmp_delta", "price_pct_change"]
         metric_label = "LMP Price Shift"
@@ -333,14 +323,14 @@ else:
         height_multiplier = 6000
         bar_radius = 8800
 
-    # 1. Primary Metric Shift
+   
     metric_col = next((c for c in metric_col_choices if c in df_filtered.columns), None)
     if metric_col:
         df_filtered["metric_val"] = pd.to_numeric(df_filtered[metric_col], errors="coerce").fillna(0.0)
     else:
         df_filtered["metric_val"] = 0.0
 
-    # 2. Extract actual Game Price & Baseline Price
+    
     game_price_cols = ["game_price", "game_lmp", "game_value"]
     base_price_cols = ["baseline_price", "baseline_lmp", "baseline_value"]
 
@@ -357,12 +347,12 @@ else:
     else:
         df_filtered["base_val"] = 0.0
 
-    # 3. Pre-format strings for PyDeck tooltip rendering
+   
     df_filtered["game_price_fmt"] = df_filtered["game_val"].map("{:.2f}".format)
     df_filtered["base_price_fmt"] = df_filtered["base_val"].map("{:.2f}".format)
     df_filtered["metric_fmt"] = df_filtered["metric_val"].map("{:.2f}".format)
 
-    # 4. Height scaling and bar styling
+  
     df_filtered["bar_height"] = df_filtered["metric_val"].abs() * height_multiplier
     df_filtered["bar_color"] = df_filtered["metric_val"].apply(lambda val: pos_rgb if val >= 0 else neg_rgb)
 
@@ -400,13 +390,11 @@ else:
         }
     }
 
-# ========================================================
-# 6. RENDER DASHBOARD
-# ========================================================
+
 col1, col2 = st.columns([3, 1])
 
 with col1:
-    # Color Legend Header HTML per mode
+    
     if view_mode == "Gametime Load Comparison (CAISO vs ERCOT)":
         legend_html = """
         <div style="display: flex; gap: 20px; margin-bottom: 10px; font-size: 13px; font-weight: 600;">
