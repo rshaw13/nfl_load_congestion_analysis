@@ -1,5 +1,6 @@
 from pathlib import Path
 import pandas as pd
+import re
 
 # ========================================================
 # 1. PATHS, DIRECTORIES & LOOKUP TABLES
@@ -16,25 +17,34 @@ game_date_str = "2025-10-26"
 
 # Hardcoded fallback for unmapped coordinates and states
 FALLBACK_NODES = {
-    "ANAHEIM_6_N001"    : {"city" : "Anaheim, CA", "us_state": "California", "latitude": 33.8531627, "longitude": -117.857995},
-    "BALCH1_7_N001"     : {"city" : "Fresno, CA", "us_state": "California", "latitude": 36.908933, "longitude": -119.087736},
-    "BEARTAP_1_N001"    : {"city" : "Bakersfield, CA", "us_state": "California", "latitude": 35.38, "longitude": -119.0},
-    "MKT_SUB_LNODEONC"  : {"city" : "Los Angeles, CA", "us_state": "California", "latitude": 34.04330978, "longitude": -118.2462089},
-    "OAKLAND_1_N001"    : {"city" : "Oakland, CA", "us_state": "California", "latitude": 37.797435, "longitude": -122.2809076},
-    "PGSF_2_PDRP58-APND": {"city" : "San Francisco, CA", "us_state": "California", "latitude": 37.768483, "longitude": -122.441301},
-    "SNJOSEB_1_N001"    : {"city" : "San Jose, CA", "us_state": "California", "latitude": 37.34102433, "longitude": -121.9009494},
-    "SOUTHBY_6_N001"    : {"city" : "Sacramento, CA", "us_state": "California", "latitude": 38.5756129, "longitude": -121.497588},
-    "URBAN_6_N001"      : {"city" : "San Diego, CA", "us_state": "California", "latitude": 32.71336176, "longitude": -117.151456},
-    "SCEW_2_PDRP89-APND": {"city" : "Long Beach, CA", "us_state": "California", "latitude": 33.767884, "longitude": -118.149024},
-    "AUSTPL_ALL"        : {"city" : "Austin, TX", "us_state": "Texas", "latitude": 30.293692, "longitude": -97.784416},
-    "CBY_CBY_G1"        : {"city" : "Baytown, TX", "us_state": "Texas", "latitude": 29.750566, "longitude": -94.923326},
-    "CNTRY_RN"          : {"city" : "Arlington, TX", "us_state": "Texas", "latitude": 32.688263, "longitude": -97.084527},
-    "CR_RN"             : {"city" : "Houston, TX", "us_state": "Texas", "latitude": 29.776876, "longitude": -95.3799},
-    "HLSES_UNIT5"       : {"city" : "Fort Worth, TX", "us_state": "Texas", "latitude": 32.727748, "longitude": -97.219188},
-    "ODESW_RN"          : {"city" : "Odessa, TX", "us_state": "Texas", "latitude": 31.871254, "longitude": -102.398561},
-    "P2_DGR2_RN"        : {"city" : "San Antonio, TX", "us_state": "Texas", "latitude": 29.357551, "longitude": -98.412407},
-    "PRCRK_RN"          : {"city" : "Dallas, TX", "us_state": "Texas", "latitude": 32.775217, "longitude": -96.662261},
+    "ANAHEIM_6_N001"    : {"city": "Anaheim, CA", "us_state": "California", "latitude": 33.8531627, "longitude": -117.857995},
+    "BALCH1_7_N001"     : {"city": "Fresno, CA", "us_state": "California", "latitude": 36.908933, "longitude": -119.087736},
+    "BEARTAP_1_N001"    : {"city": "Bakersfield, CA", "us_state": "California", "latitude": 35.38, "longitude": -119.0},
+    "MKT_SUB_LNODEONC"  : {"city": "Los Angeles, CA", "us_state": "California", "latitude": 34.04330978, "longitude": -118.2462089},
+    "OAKLAND_1_N001"    : {"city": "Oakland, CA", "us_state": "California", "latitude": 37.797435, "longitude": -122.2809076},
+    "PGSF_2_PDRP58-APND": {"city": "San Francisco, CA", "us_state": "California", "latitude": 37.768483, "longitude": -122.441301},
+    "SNJOSEB_1_N001"    : {"city": "San Jose, CA", "us_state": "California", "latitude": 37.34102433, "longitude": -121.9009494},
+    "SOUTHBY_6_N001"    : {"city": "Sacramento, CA", "us_state": "California", "latitude": 38.5756129, "longitude": -121.497588},
+    "URBAN_6_N001"      : {"city": "San Diego, CA", "us_state": "California", "latitude": 32.71336176, "longitude": -117.151456},
+    "SCEW_2_PDRP89-APND": {"city": "Long Beach, CA", "us_state": "California", "latitude": 33.767884, "longitude": -118.149024},
+    "AUSTPL_ALL"        : {"city": "Austin, TX", "us_state": "Texas", "latitude": 30.293692, "longitude": -97.784416},
+    "CBY_CBY_G1"        : {"city": "Baytown, TX", "us_state": "Texas", "latitude": 29.750566, "longitude": -94.923326},
+    "CNTRY_RN"          : {"city": "Arlington, TX", "us_state": "Texas", "latitude": 32.688263, "longitude": -97.084527},
+    "CR_RN"             : {"city": "Houston, TX", "us_state": "Texas", "latitude": 29.776876, "longitude": -95.3799},
+    "HLSES_UNIT5"       : {"city": "Fort Worth, TX", "us_state": "Texas", "latitude": 32.727748, "longitude": -97.219188},
+    "ODESW_RN"          : {"city": "Odessa, TX", "us_state": "Texas", "latitude": 31.871254, "longitude": -102.398561},
+    "P2_DGR2_RN"        : {"city": "San Antonio, TX", "us_state": "Texas", "latitude": 29.357551, "longitude": -98.412407},
+    "PRCRK_RN"          : {"city": "Dallas, TX", "us_state": "Texas", "latitude": 32.775217, "longitude": -96.662261},
 }
+
+
+def clean_node_to_city(raw_name):
+    """Fallback function to derive a human-readable city string from raw node code."""
+    if not isinstance(raw_name, str) or not raw_name:
+        return "Unknown City"
+    cleaned = re.sub(r'_\d+_[A-Z0-9]+$', '', raw_name)
+    cleaned = cleaned.replace('_', ' ').strip()
+    return cleaned.title()
 
 
 def process_file_timestamps(df, filename):
@@ -207,7 +217,7 @@ if lmp_dfs:
             lmp_summary[f"{comp}_delta"] / lmp_summary[f"baseline_{comp}"].abs()
         ) * 100
 
-    # 1. Merge with nodes_with_states.csv lookup table if available
+    # 1. Merge only coordinates and state from nodes_with_states.csv (explicitly ignoring any city column in nodes_df)
     if nodes_df is not None:
         lmp_summary = pd.merge(
             lmp_summary,
@@ -217,20 +227,28 @@ if lmp_dfs:
             how="left"
         ).drop(columns=["node_id"], errors="ignore")
 
-    # 2. Hardcode fallback lookup for unmapped coordinates and states
+    # Ensure required columns exist
+    for col in ["us_state", "latitude", "longitude"]:
+        if col not in lmp_summary.columns:
+            lmp_summary[col] = pd.NA
+
+    # 2. Assign city strictly from FALLBACK_NODES dictionary
+    lmp_summary["city"] = lmp_summary["location"].map(
+        lambda loc: FALLBACK_NODES.get(loc, {}).get("city", None)
+    )
+
+    # Apply remaining fallback attributes (state, lat, lon) from dictionary if missing
     for loc, info in FALLBACK_NODES.items():
         mask = lmp_summary["location"] == loc
         if mask.any():
-            if "us_state" not in lmp_summary.columns:
-                lmp_summary["us_state"] = pd.NA
-            if "latitude" not in lmp_summary.columns:
-                lmp_summary["latitude"] = pd.NA
-            if "longitude" not in lmp_summary.columns:
-                lmp_summary["longitude"] = pd.NA
-
             lmp_summary.loc[mask & lmp_summary["us_state"].isna(), "us_state"] = info["us_state"]
             lmp_summary.loc[mask & lmp_summary["latitude"].isna(), "latitude"] = info["latitude"]
             lmp_summary.loc[mask & lmp_summary["longitude"].isna(), "longitude"] = info["longitude"]
+
+    # 3. Clean string fallback for nodes not listed in FALLBACK_NODES
+    unmapped_mask = lmp_summary["city"].isna()
+    if unmapped_mask.any():
+        lmp_summary.loc[unmapped_mask, "city"] = lmp_summary.loc[unmapped_mask, "location"].apply(clean_node_to_city)
 
     master_lmp_file = output_folder / "master_congestion_and_lmp_deltas.csv"
     lmp_summary.to_csv(master_lmp_file, index=False)

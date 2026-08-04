@@ -200,10 +200,11 @@ else:
 layers = []
 
 if view_mode == "Load Comparison (CAISO vs Texas)":
+    # 1. Render 3D State Boundaries
     state_layer = pdk.Layer(
         "GeoJsonLayer",
         states_geojson,
-        opacity=0.75,
+        opacity=0.35,
         stroked=True,
         filled=True,
         extruded=True,
@@ -216,67 +217,114 @@ if view_mode == "Load Comparison (CAISO vs Texas)":
         pickable=True
     )
     layers.append(state_layer)
+
+    # 2. Build 3D Load Bars at Regional Centroids
+    load_bar_data = pd.DataFrame([
+        {
+            "display_city": "California System Load",
+            "us_state": "California",
+            "latitude": 36.7783,
+            "longitude": -119.4179,
+            "load_delta": ca_load_delta,
+            "bar_height": abs(ca_load_delta) * 50,  # Scaled height multiplier for MW
+            "bar_color": [235, 64, 52, 220] if ca_load_delta >= 0 else [52, 137, 235, 220]
+        },
+        {
+            "display_city": "Texas System Load",
+            "us_state": "Texas",
+            "latitude": 31.9686,
+            "longitude": -99.9018,
+            "load_delta": tx_load_delta,
+            "bar_height": abs(tx_load_delta) * 50,
+            "bar_color": [235, 64, 52, 220] if tx_load_delta >= 0 else [52, 137, 235, 220]
+        }
+    ])
+
+    load_column_layer = pdk.Layer(
+        "ColumnLayer",
+        data=load_bar_data,
+        get_position=["longitude", "latitude"],
+        get_elevation="bar_height",
+        radius=25000,
+        radius_min_pixels=12,
+        radius_max_pixels=40,
+        elevation_scale=1,
+        get_fill_color="bar_color",
+        pickable=True,
+        auto_highlight=True,
+        extruded=True
+    )
+    layers.append(load_column_layer)
     
     tooltip = {
-        "html": "<b>State:</b> {properties.name}<br/>"
-                "<b>Load Shift:</b> {properties.load_diff_mw:,.2f} MW",
-        "style": {"backgroundColor": "#18181B", "color": "#FFFFFF", "fontSize": "12px", "padding": "8px 12px"}
+        "html": "<b>Region:</b> {display_city}<br/>"
+                "<b>State:</b> {us_state}<br/>"
+                "<hr style='margin: 5px 0;'>"
+                "<b>Load Shift:</b> {load_delta:,.2f} MW",
+        "style": {
+            "backgroundColor": "#18181B",
+            "color": "#FFFFFF",
+            "fontSize": "12px",
+            "borderRadius": "6px",
+            "padding": "8px 12px",
+            "boxShadow": "0 4px 6px -1px rgba(0, 0, 0, 0.5)"
+        }
     }
 
 else:
-    # Match ETL script column names accurately
+    # Set mode-specific metrics, colors, and height scaling multipliers
     if view_mode == "CAISO Congestion Analytics":
         df_filtered = df_nodes[df_nodes["us_state"] == "California"].copy()
         metric_col_choices = ["congestion_delta", "game_congestion"]
-        game_price_cols = ["game_congestion", "game_price", "game_lmp"]
-        base_price_cols = ["baseline_congestion", "baseline_price", "baseline_lmp"]
         metric_label = "Congestion Shift"
         pos_rgb, neg_rgb = [46, 204, 113, 220], [0, 150, 136, 220]
+        height_multiplier = 2000
         
     elif view_mode == "CAISO Loss Analytics":
         df_filtered = df_nodes[df_nodes["us_state"] == "California"].copy()
         metric_col_choices = ["loss_delta", "game_loss"]
-        game_price_cols = ["game_loss", "game_price", "game_lmp"]
-        base_price_cols = ["baseline_loss", "baseline_price", "baseline_lmp"]
         metric_label = "Loss Shift"
         pos_rgb, neg_rgb = [241, 196, 15, 220], [155, 89, 182, 220]
+        height_multiplier = 20000  # 10x height scaling for Loss mode
         
     else:  # Gameday Nodal Price Spike Analysis
         df_filtered = df_nodes[df_nodes["us_state"].isin(["California", "Texas"])].copy()
         metric_col_choices = ["price_delta", "lmp_delta", "price_pct_change"]
-        game_price_cols = ["game_price", "game_lmp", "game_value"]
-        base_price_cols = ["baseline_price", "baseline_lmp", "baseline_value"]
         metric_label = "LMP Price Shift"
         pos_rgb, neg_rgb = [235, 64, 52, 220], [52, 137, 235, 220]
+        height_multiplier = 2000
 
-    # 1. Metric Delta Calculation
+    # 1. Primary Metric Shift (Congestion, Loss, or LMP Price Delta)
     metric_col = next((c for c in metric_col_choices if c in df_filtered.columns), None)
     if metric_col:
         df_filtered["metric_val"] = pd.to_numeric(df_filtered[metric_col], errors="coerce").fillna(0.0)
     else:
         df_filtered["metric_val"] = 0.0
 
-    # 2. Game Price and Baseline Price Extraction (Fixing $0.00 issue)
+    # 2. Extract actual Game Price & Baseline Price (Fixes $0.00 issue across all modes)
+    game_price_cols = ["game_price", "game_lmp", "game_value"]
+    base_price_cols = ["baseline_price", "baseline_lmp", "baseline_value"]
+
     game_col = next((c for c in game_price_cols if c in df_filtered.columns), None)
     base_col = next((c for c in base_price_cols if c in df_filtered.columns), None)
+
+    if game_col:
+        df_filtered["game_val"] = pd.to_numeric(df_filtered[game_col], errors="coerce").fillna(0.0)
+    else:
+        df_filtered["game_val"] = 0.0
 
     if base_col:
         df_filtered["base_val"] = pd.to_numeric(df_filtered[base_col], errors="coerce").fillna(0.0)
     else:
         df_filtered["base_val"] = 0.0
 
-    if game_col:
-        df_filtered["game_val"] = pd.to_numeric(df_filtered[game_col], errors="coerce").fillna(0.0)
-    else:
-        df_filtered["game_val"] = df_filtered["base_val"] + df_filtered["metric_val"]
-
-    # 3. Pre-format 2-decimal strings for PyDeck tooltip rendering
+    # 3. Pre-format strings for PyDeck tooltip rendering
     df_filtered["game_price_fmt"] = df_filtered["game_val"].map("{:.2f}".format)
     df_filtered["base_price_fmt"] = df_filtered["base_val"].map("{:.2f}".format)
     df_filtered["metric_fmt"] = df_filtered["metric_val"].map("{:.2f}".format)
 
     # 4. Height scaling and bar styling
-    df_filtered["bar_height"] = df_filtered["metric_val"].abs() * 2000
+    df_filtered["bar_height"] = df_filtered["metric_val"].abs() * height_multiplier
     df_filtered["bar_color"] = df_filtered["metric_val"].apply(lambda val: pos_rgb if val >= 0 else neg_rgb)
 
     column_layer = pdk.Layer(
