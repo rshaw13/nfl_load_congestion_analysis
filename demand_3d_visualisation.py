@@ -23,7 +23,6 @@ csv_combined_path = DATA_DIR / "master_combined_metrics.csv"
 texans_logo_url = "https://a.espncdn.com/i/teamlogos/nfl/500/hou.png"
 sf49ers_logo_url = "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png"
 
-# Header card spans full width of the main content area (from map edge to right panel edge)
 st.html(f"""
 <div id="game-header-card" style="
     background: #18181B;
@@ -97,9 +96,10 @@ def load_data():
     # Standardize state names
     df_nodes["us_state"] = df_nodes["us_state"].replace({"CA": "California", "TX": "Texas"})
     
-    # Prioritize the 'city' column output by ETL script, fallback to cleaning 'location'
-    if "city" in df_nodes.columns and df_nodes["city"].notna().any():
-        df_nodes["display_city"] = df_nodes["city"].fillna(df_nodes["location"].apply(clean_city_name))
+    # Strictly use 'City' or 'city' column from master congestion CSV
+    city_col = next((c for c in ["City", "city"] if c in df_nodes.columns), None)
+    if city_col and df_nodes[city_col].notna().any():
+        df_nodes["display_city"] = df_nodes[city_col].fillna(df_nodes["location"].apply(clean_city_name))
     else:
         df_nodes["display_city"] = df_nodes["location"].apply(clean_city_name)
     
@@ -155,12 +155,12 @@ for feature in states_geojson.get("features", []):
         val = abs(ca_load_delta)
         feature["properties"]["elevation"] = float(val * 35)
         feature["properties"]["load_diff_mw"] = ca_load_delta
-        feature["properties"]["fill_color"] = [235, 64, 52, 180] if ca_load_delta >= 0 else [52, 137, 235, 180]
+        feature["properties"]["fill_color"] = [235, 64, 52, 180]  # Red for CA
     elif st_name == "Texas":
         val = abs(tx_load_delta)
         feature["properties"]["elevation"] = float(val * 35)
         feature["properties"]["load_diff_mw"] = tx_load_delta
-        feature["properties"]["fill_color"] = [235, 64, 52, 180] if tx_load_delta >= 0 else [52, 137, 235, 180]
+        feature["properties"]["fill_color"] = [52, 137, 235, 180]  # Blue for TX
 
 # ========================================================
 # 4. SIDEBAR CONTROLS & CAMERA VIEWS
@@ -176,7 +176,7 @@ view_mode = st.sidebar.radio(
     ]
 )
 
-# Camera Routing: California focused for Congestion & Losses; Westward default for regional views
+# Camera Routing
 if view_mode in ["CAISO Congestion Analytics", "CAISO Loss Analytics"]:
     initial_view = pdk.ViewState(
         latitude=36.7783,
@@ -218,7 +218,7 @@ if view_mode == "Load Comparison (CAISO vs Texas)":
     )
     layers.append(state_layer)
 
-    # 2. Build 3D Load Bars at Regional Centroids
+    # 2. Build 3D Load Bars (3x thicker: radius=75000; CAISO Red, Texas Blue)
     load_bar_data = pd.DataFrame([
         {
             "display_city": "California System Load",
@@ -226,8 +226,9 @@ if view_mode == "Load Comparison (CAISO vs Texas)":
             "latitude": 36.7783,
             "longitude": -119.4179,
             "load_delta": ca_load_delta,
-            "bar_height": abs(ca_load_delta) * 50,  # Scaled height multiplier for MW
-            "bar_color": [235, 64, 52, 220] if ca_load_delta >= 0 else [52, 137, 235, 220]
+            "load_delta_fmt": f"{ca_load_delta:,.0f}",  # Pre-formatted string rounded to 0 decimals
+            "bar_height": abs(ca_load_delta) * 50,
+            "bar_color": [235, 64, 52, 220]  # Red for CAISO
         },
         {
             "display_city": "Texas System Load",
@@ -235,8 +236,9 @@ if view_mode == "Load Comparison (CAISO vs Texas)":
             "latitude": 31.9686,
             "longitude": -99.9018,
             "load_delta": tx_load_delta,
+            "load_delta_fmt": f"{tx_load_delta:,.0f}",  # Pre-formatted string rounded to 0 decimals
             "bar_height": abs(tx_load_delta) * 50,
-            "bar_color": [235, 64, 52, 220] if tx_load_delta >= 0 else [52, 137, 235, 220]
+            "bar_color": [52, 137, 235, 220]  # Blue for Texas
         }
     ])
 
@@ -245,9 +247,9 @@ if view_mode == "Load Comparison (CAISO vs Texas)":
         data=load_bar_data,
         get_position=["longitude", "latitude"],
         get_elevation="bar_height",
-        radius=25000,
-        radius_min_pixels=12,
-        radius_max_pixels=40,
+        radius=75000,  # 3x thicker than prior 25000
+        radius_min_pixels=20,
+        radius_max_pixels=100,
         elevation_scale=1,
         get_fill_color="bar_color",
         pickable=True,
@@ -260,7 +262,7 @@ if view_mode == "Load Comparison (CAISO vs Texas)":
         "html": "<b>Region:</b> {display_city}<br/>"
                 "<b>State:</b> {us_state}<br/>"
                 "<hr style='margin: 5px 0;'>"
-                "<b>Load Shift:</b> {load_delta:,.2f} MW",
+                "<b>Load Shift:</b> {load_delta_fmt} MW",
         "style": {
             "backgroundColor": "#18181B",
             "color": "#FFFFFF",
@@ -278,7 +280,7 @@ else:
         metric_col_choices = ["congestion_delta", "game_congestion"]
         metric_label = "Congestion Shift"
         pos_rgb, neg_rgb = [46, 204, 113, 220], [0, 150, 136, 220]
-        height_multiplier = 2000
+        height_multiplier = 20000  # Scaled up by 10x
         
     elif view_mode == "CAISO Loss Analytics":
         df_filtered = df_nodes[df_nodes["us_state"] == "California"].copy()
@@ -301,7 +303,7 @@ else:
     else:
         df_filtered["metric_val"] = 0.0
 
-    # 2. Extract actual Game Price & Baseline Price (Fixes $0.00 issue across all modes)
+    # 2. Extract actual Game Price & Baseline Price
     game_price_cols = ["game_price", "game_lmp", "game_value"]
     base_price_cols = ["baseline_price", "baseline_lmp", "baseline_value"]
 
@@ -379,9 +381,8 @@ with col2:
     st.markdown("---")
     
     if view_mode == "Load Comparison (CAISO vs Texas)":
-        st.metric(label="CAISO Load Delta", value=f"{ca_load_delta:,.2f} MW")
-        st.metric(label="Texas Load Delta", value=f"{tx_load_delta:,.2f} MW")
-        st.info("Node bars hidden. 3D boundaries elevated based on load shifts.")
+        st.metric(label="CAISO Load Delta", value=f"{ca_load_delta:,.0f} MW")
+        st.metric(label="Texas Load Delta", value=f"{tx_load_delta:,.0f} MW")
     else:
         avg_val = df_filtered["metric_val"].mean()
         max_idx = df_filtered["metric_val"].idxmax()
