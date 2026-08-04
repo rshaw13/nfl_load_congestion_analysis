@@ -184,7 +184,7 @@ view_mode = st.sidebar.radio(
     ]
 )
 
-# Camera Routing: Shifted CAISO view south to 35.2 latitude
+# Camera Routing: CAISO view shifted south to 35.2 latitude
 if view_mode in ["Gametime CAISO Congestion Analytics", "Gametime CAISO Loss Analytics"]:
     initial_view = pdk.ViewState(
         latitude=35.2,
@@ -226,7 +226,6 @@ if view_mode == "Gametime Load Comparison (CAISO vs ERCOT)":
     )
     layers.append(state_layer)
 
-    # Scale multiplier for MW load columns
     load_scale = 10.0
 
     load_bar_data = pd.DataFrame([
@@ -240,8 +239,7 @@ if view_mode == "Gametime Load Comparison (CAISO vs ERCOT)":
             "game_load_fmt": f"{ca_game_load:,.0f}",
             "base_load_fmt": f"{ca_base_load:,.0f}",
             "game_height": ca_game_load * load_scale,
-            "base_height": ca_base_load * load_scale,
-            "total_stacked_height": (ca_game_load + ca_base_load) * load_scale
+            "total_stacked_height": (ca_game_load + abs(ca_base_load - ca_game_load)) * load_scale
         },
         {
             "display_city": "Texas System Load",
@@ -253,13 +251,12 @@ if view_mode == "Gametime Load Comparison (CAISO vs ERCOT)":
             "game_load_fmt": f"{tx_game_load:,.0f}",
             "base_load_fmt": f"{tx_base_load:,.0f}",
             "game_height": tx_game_load * load_scale,
-            "base_height": tx_base_load * load_scale,
-            "total_stacked_height": (tx_game_load + tx_base_load) * load_scale
+            "total_stacked_height": (tx_game_load + abs(tx_base_load - tx_game_load)) * load_scale
         }
     ])
 
-    # Stacked Outer Column: Baseline Load (Red) stacked on top
-    baseline_column_layer = pdk.Layer(
+    # 1. Red Top Column Layer (Difference stacked on top of Gametime Load)
+    difference_column_layer = pdk.Layer(
         "ColumnLayer",
         data=load_bar_data,
         get_position=["longitude", "latitude"],
@@ -268,13 +265,13 @@ if view_mode == "Gametime Load Comparison (CAISO vs ERCOT)":
         radius_min_pixels=20,
         radius_max_pixels=100,
         elevation_scale=1,
-        get_fill_color="[235, 64, 52, 220]",  # Red for Baseline
+        get_fill_color="[235, 64, 52, 220]",  # Red for Load Difference
         pickable=True,
         auto_highlight=True,
         extruded=True
     )
 
-    # Stacked Inner/Bottom Column: Gametime Load (Blue) at base
+    # 2. Blue Base Column Layer (Gametime Load)
     game_column_layer = pdk.Layer(
         "ColumnLayer",
         data=load_bar_data,
@@ -290,7 +287,7 @@ if view_mode == "Gametime Load Comparison (CAISO vs ERCOT)":
         extruded=True
     )
 
-    layers.append(baseline_column_layer)
+    layers.append(difference_column_layer)
     layers.append(game_column_layer)
     
     tooltip = {
@@ -417,7 +414,7 @@ with col1:
                 <span style="width: 14px; height: 14px; background-color: #3489EB; border-radius: 3px; display: inline-block;"></span> Gametime Load (Blue)
             </div>
             <div style="display: flex; align-items: center; gap: 8px;">
-                <span style="width: 14px; height: 14px; background-color: #EB4034; border-radius: 3px; display: inline-block;"></span> Baseline Load (Red)
+                <span style="width: 14px; height: 14px; background-color: #EB4034; border-radius: 3px; display: inline-block;"></span> Baseline Load Difference (Red)
             </div>
         </div>
         """
