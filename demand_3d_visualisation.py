@@ -18,22 +18,23 @@ csv_load_path = DATA_DIR / "master_load_deltas.csv"
 csv_combined_path = DATA_DIR / "master_combined_metrics.csv"
 
 # ========================================================
-# 2. FLOATING GAME HEADER CARD OVERLAY
+# 2. FULL-WIDTH FLOATING GAME HEADER CARD
 # ========================================================
 texans_logo_url = "https://a.espncdn.com/i/teamlogos/nfl/500/hou.png"
 sf49ers_logo_url = "https://a.espncdn.com/i/teamlogos/nfl/500/sf.png"
 
+# Header card spans full width of the main content area (from map edge to right panel edge)
 st.html(f"""
 <div id="game-header-card" style="
     background: #18181B;
     border: 1px solid rgba(255, 255, 255, 0.15);
     border-radius: 12px;
-    padding: 16px 24px;
+    padding: 16px 32px;
     color: #FFFFFF;
     font-family: system-ui, -apple-system, sans-serif;
     box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.6);
-    max-width: 650px;
-    margin: 0 auto 20px auto;
+    width: 100%;
+    margin-bottom: 20px;
     text-align: center;
 ">
     <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #A1A1AA; font-weight: 600; margin-bottom: 8px;">
@@ -41,24 +42,24 @@ st.html(f"""
     </div>
     
     <div style="display: flex; align-items: center; justify-content: space-between; margin: 8px 0;">
-        <div style="display: flex; align-items: center; gap: 12px;">
-            <img src="{texans_logo_url}" alt="Texans Logo" style="width: 40px; height: 40px; object-fit: contain;" />
+        <div style="display: flex; align-items: center; gap: 16px;">
+            <img src="{texans_logo_url}" alt="Texans Logo" style="width: 44px; height: 44px; object-fit: contain;" />
             <div style="text-align: left;">
-                <div style="font-size: 15px; font-weight: 700;">Houston Texans</div>
-                <div style="font-size: 11px; color: #A1A1AA;">(3 - 4)</div>
+                <div style="font-size: 16px; font-weight: 700;">Houston Texans</div>
+                <div style="font-size: 12px; color: #A1A1AA;">(3 - 4)</div>
             </div>
         </div>
 
-        <div style="font-size: 24px; font-weight: 800; color: #38BDF8; padding: 0 16px;">
-            26 <span style="font-size: 16px; color: #71717A; font-weight: 400;">-</span> 15
+        <div style="font-size: 26px; font-weight: 800; color: #38BDF8; padding: 0 24px;">
+            26 <span style="font-size: 18px; color: #71717A; font-weight: 400;">-</span> 15
         </div>
 
-        <div style="display: flex; align-items: center; gap: 12px;">
+        <div style="display: flex; align-items: center; gap: 16px;">
             <div style="text-align: right;">
-                <div style="font-size: 15px; font-weight: 700;">SF 49ers</div>
-                <div style="font-size: 11px; color: #A1A1AA;">(5 - 3)</div>
+                <div style="font-size: 16px; font-weight: 700;">SF 49ers</div>
+                <div style="font-size: 12px; color: #A1A1AA;">(5 - 3)</div>
             </div>
-            <img src="{sf49ers_logo_url}" alt="49ers Logo" style="width: 40px; height: 40px; object-fit: contain;" />
+            <img src="{sf49ers_logo_url}" alt="49ers Logo" style="width: 44px; height: 44px; object-fit: contain;" />
         </div>
     </div>
 
@@ -74,10 +75,9 @@ st.html(f"""
 # 3. HELPER FUNCTIONS & DATA LOADING
 # ========================================================
 def clean_city_name(raw_name):
-    """Extract clean city/location name by stripping node codes."""
+    """Fallback helper to clean node strings if city column is missing."""
     if not isinstance(raw_name, str) or not raw_name:
-        return "Unknown City"
-    # Remove standard node suffixes like _1_N001 or _2_N002
+        return "Unknown Location"
     cleaned = re.sub(r'_\d+_[A-Z0-9]+$', '', raw_name)
     cleaned = cleaned.replace('_', ' ').strip()
     return cleaned.title()
@@ -97,9 +97,11 @@ def load_data():
     # Standardize state names
     df_nodes["us_state"] = df_nodes["us_state"].replace({"CA": "California", "TX": "Texas"})
     
-    # Format city display column
-    city_col = next((c for c in ["city", "location_name", "location", "node"] if c in df_nodes.columns), "location")
-    df_nodes["display_city"] = df_nodes[city_col].apply(clean_city_name)
+    # Prioritize the 'city' column output by ETL script, fallback to cleaning 'location'
+    if "city" in df_nodes.columns and df_nodes["city"].notna().any():
+        df_nodes["display_city"] = df_nodes["city"].fillna(df_nodes["location"].apply(clean_city_name))
+    else:
+        df_nodes["display_city"] = df_nodes["location"].apply(clean_city_name)
     
     if csv_load_path.exists():
         df_load = pd.read_csv(csv_load_path)
@@ -184,7 +186,6 @@ if view_mode in ["CAISO Congestion Analytics", "CAISO Loss Analytics"]:
         bearing=0
     )
 else:
-    # Shifted slightly west to frame both CA and TX clearly
     initial_view = pdk.ViewState(
         latitude=33.5,
         longitude=-108.0,
@@ -223,56 +224,58 @@ if view_mode == "Load Comparison (CAISO vs Texas)":
     }
 
 else:
-    # Filter dataset based on mode
+    # Match ETL script column names accurately
     if view_mode == "CAISO Congestion Analytics":
         df_filtered = df_nodes[df_nodes["us_state"] == "California"].copy()
-        metric_col_choices = ["congestion_delta", "congestion_pct_change", "game_congestion"]
-        game_price_cols = ["game_congestion", "game_lmp", "game_price"]
-        base_price_cols = ["baseline_congestion", "baseline_lmp", "baseline_price"]
+        metric_col_choices = ["congestion_delta", "game_congestion"]
+        game_price_cols = ["game_congestion", "game_price", "game_lmp"]
+        base_price_cols = ["baseline_congestion", "baseline_price", "baseline_lmp"]
         metric_label = "Congestion Shift"
         pos_rgb, neg_rgb = [46, 204, 113, 220], [0, 150, 136, 220]
         
     elif view_mode == "CAISO Loss Analytics":
         df_filtered = df_nodes[df_nodes["us_state"] == "California"].copy()
-        metric_col_choices = ["loss_delta", "loss_pct_change", "game_loss"]
-        game_price_cols = ["game_loss", "game_lmp", "game_price"]
-        base_price_cols = ["baseline_loss", "baseline_lmp", "baseline_price"]
+        metric_col_choices = ["loss_delta", "game_loss"]
+        game_price_cols = ["game_loss", "game_price", "game_lmp"]
+        base_price_cols = ["baseline_loss", "baseline_price", "baseline_lmp"]
         metric_label = "Loss Shift"
         pos_rgb, neg_rgb = [241, 196, 15, 220], [155, 89, 182, 220]
         
     else:  # Gameday Nodal Price Spike Analysis
         df_filtered = df_nodes[df_nodes["us_state"].isin(["California", "Texas"])].copy()
-        metric_col_choices = ["lmp_delta", "lmp_pct_change", "congestion_delta"]
-        game_price_cols = ["game_lmp", "game_price", "game_value", "lmp_game"]
-        base_price_cols = ["baseline_lmp", "baseline_price", "baseline_value", "lmp_baseline"]
+        metric_col_choices = ["price_delta", "lmp_delta", "price_pct_change"]
+        game_price_cols = ["game_price", "game_lmp", "game_value"]
+        base_price_cols = ["baseline_price", "baseline_lmp", "baseline_value"]
         metric_label = "LMP Price Shift"
         pos_rgb, neg_rgb = [235, 64, 52, 220], [52, 137, 235, 220]
 
-    # Resolve metric delta column
-    metric_col = next((c for c in metric_col_choices if c in df_filtered.columns), metric_col_choices[0])
-    df_filtered["metric_val"] = pd.to_numeric(df_filtered[metric_col], errors="coerce").fillna(0.0)
+    # 1. Metric Delta Calculation
+    metric_col = next((c for c in metric_col_choices if c in df_filtered.columns), None)
+    if metric_col:
+        df_filtered["metric_val"] = pd.to_numeric(df_filtered[metric_col], errors="coerce").fillna(0.0)
+    else:
+        df_filtered["metric_val"] = 0.0
 
-    # Resolve baseline & game prices cleanly (resolving $0 issue)
-    base_col = next((c for c in base_price_cols if c in df_filtered.columns), None)
+    # 2. Game Price and Baseline Price Extraction (Fixing $0.00 issue)
     game_col = next((c for c in game_price_cols if c in df_filtered.columns), None)
+    base_col = next((c for c in base_price_cols if c in df_filtered.columns), None)
 
-    if base_col and base_col in df_filtered.columns:
+    if base_col:
         df_filtered["base_val"] = pd.to_numeric(df_filtered[base_col], errors="coerce").fillna(0.0)
     else:
         df_filtered["base_val"] = 0.0
 
-    if game_col and game_col in df_filtered.columns and (df_filtered[game_col] != 0).any():
+    if game_col:
         df_filtered["game_val"] = pd.to_numeric(df_filtered[game_col], errors="coerce").fillna(0.0)
     else:
-        # Fallback to baseline + metric delta if explicit game price is missing or zeroed out
         df_filtered["game_val"] = df_filtered["base_val"] + df_filtered["metric_val"]
 
-    # String formatting for hover tooltips (rounded to 2 decimal places)
+    # 3. Pre-format 2-decimal strings for PyDeck tooltip rendering
     df_filtered["game_price_fmt"] = df_filtered["game_val"].map("{:.2f}".format)
     df_filtered["base_price_fmt"] = df_filtered["base_val"].map("{:.2f}".format)
     df_filtered["metric_fmt"] = df_filtered["metric_val"].map("{:.2f}".format)
 
-    # Elevation & Bar Styling with dynamic radius sizing
+    # 4. Height scaling and bar styling
     df_filtered["bar_height"] = df_filtered["metric_val"].abs() * 2000
     df_filtered["bar_color"] = df_filtered["metric_val"].apply(lambda val: pos_rgb if val >= 0 else neg_rgb)
 
@@ -294,6 +297,7 @@ else:
 
     tooltip = {
         "html": "<b>City:</b> {display_city}<br/>"
+                "<b>Node:</b> {location}<br/>"
                 "<b>State:</b> {us_state}<br/>"
                 "<hr style='margin: 5px 0;'>"
                 "<b>" + metric_label + ":</b> ${metric_fmt} /MWh<br/>"
